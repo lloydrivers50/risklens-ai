@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from server.config import get_settings
+from server.features.extraction.router import router as extraction_router
+from server.features.extraction.service import ExtractionService
 from server.features.gateway.service import GatewayService
 from server.features.gateway.types import ModelConfig, ModelProvider, TokenUsage
 
@@ -55,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     app.state.gateway = GatewayService(settings)
+    app.state.extraction_service = ExtractionService(app.state.gateway)
     logger.info(
         "RiskLens AI started — providers: %s",
         [p.value for p in app.state.gateway.available_providers()],
@@ -85,6 +88,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(extraction_router)
 
 
 # ---------------------------------------------------------------------------
