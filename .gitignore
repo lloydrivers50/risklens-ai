@@ -75,6 +75,15 @@ cdk.out/
 .serverless/
 
 # ========================
+# Terraform
+# ========================
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+!*.tfvars.example
+
+# ========================
 # Testing
 # ========================
 coverage/
