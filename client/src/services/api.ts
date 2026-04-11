@@ -5,17 +5,24 @@ import type {
   PlaygroundRequest,
   PlaygroundResponse,
   EvaluationRun,
+  HealthResponse,
 } from '@/types/api'
 
 const API_BASE = '/api/v1'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const isFormData = options?.body instanceof FormData
+  const headers: HeadersInit = isFormData
+    ? { ...options?.headers }
+    : { 'Content-Type': 'application/json', ...options?.headers }
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
+    headers,
   })
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`)
+    const body = await res.text().catch(() => '')
+    throw new Error(body || `API error: ${res.status} ${res.statusText}`)
   }
   return res.json() as Promise<T>
 }
@@ -68,6 +75,9 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+  },
+  health: {
+    get: () => request<HealthResponse>('/health'),
   },
   evaluation: {
     run: (body: { dataset: string; model: string; provider: string; task_type: TaskType }) =>

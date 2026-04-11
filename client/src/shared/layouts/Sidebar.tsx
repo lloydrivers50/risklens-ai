@@ -8,6 +8,7 @@ import {
   GitBranch,
 } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
+import { useHealth } from '@/services/hooks'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -16,6 +17,10 @@ const navigation = [
 ]
 
 export function Sidebar() {
+  const { data: health, isError } = useHealth()
+
+  const isConnected = !!health && !isError
+
   return (
     <aside className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-surface">
       <div className="flex h-16 items-center gap-3 border-b border-border px-6">
@@ -58,11 +63,24 @@ export function Sidebar() {
             <span className="text-xs font-medium text-primary">API Status</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
-            </span>
-            <span className="text-xs text-muted">Mock mode</span>
+            {isConnected ? (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+                </span>
+                <span className="text-xs text-muted">
+                  Connected{health.version ? ` (v${health.version})` : ''}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-danger" />
+                </span>
+                <span className="text-xs text-muted">Disconnected</span>
+              </>
+            )}
           </div>
         </div>
 

@@ -5,17 +5,23 @@ import {
   DollarSign,
   Zap,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react'
 import { MetricCard } from './components/MetricCard'
 import { TaskChart } from './components/TaskChart'
 import { ModelComparison } from './components/ModelComparison'
 import { TaskTable } from './components/TaskTable'
 import { EvaluationTable } from './components/EvaluationTable'
-import { mockMetrics, mockTasks, mockEvaluationRuns } from '@/services/mock-data'
+import { useTasks } from '@/services/hooks'
+// TODO: Replace with real metrics when GET /api/v1/metrics is implemented
+import { mockMetrics, mockEvaluationRuns } from '@/services/mock-data'
 import { formatNumber, formatCurrency, formatLatency } from '@/shared/lib/utils'
 
 export function DashboardPage() {
+  // TODO: Replace with real metrics when GET /api/v1/metrics is implemented
   const metrics = mockMetrics
+
+  const { data: tasks, isLoading: tasksLoading, error: tasksError } = useTasks()
 
   return (
     <div className="space-y-8">
@@ -26,6 +32,7 @@ export function DashboardPage() {
         </p>
       </div>
 
+      {/* TODO: Replace metric cards with real data when GET /api/v1/metrics is implemented */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <MetricCard
           title="Total Tasks"
@@ -73,14 +80,30 @@ export function DashboardPage() {
         />
       </div>
 
+      {/* TODO: Replace charts with real data when GET /api/v1/metrics is implemented */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <TaskChart data={metrics.daily_tasks} />
         <ModelComparison data={metrics.model_comparison} />
       </div>
 
+      {/* TODO: Replace with real evaluation data when evaluation endpoint is implemented */}
       <EvaluationTable runs={mockEvaluationRuns} />
 
-      <TaskTable tasks={mockTasks} />
+      {/* Real task data from API */}
+      {tasksLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted" />
+          <span className="ml-2 text-sm text-muted">Loading tasks...</span>
+        </div>
+      ) : tasksError ? (
+        <div className="rounded-lg border border-border bg-surface-secondary p-6 text-center">
+          <AlertTriangle className="mx-auto h-6 w-6 text-danger mb-2" />
+          <p className="text-sm text-danger">Failed to load tasks from API</p>
+          <p className="text-xs text-muted mt-1">The backend may be unavailable. Check your connection.</p>
+        </div>
+      ) : (
+        <TaskTable tasks={tasks ?? []} />
+      )}
     </div>
   )
 }
