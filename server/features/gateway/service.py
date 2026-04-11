@@ -24,15 +24,11 @@ class GatewayService:
         self._adapters: dict[ModelProvider, BaseLLMAdapter] = {}
 
         if settings.anthropic_api_key:
-            self._adapters[ModelProvider.ANTHROPIC] = AnthropicAdapter(
-                settings.anthropic_api_key
-            )
+            self._adapters[ModelProvider.ANTHROPIC] = AnthropicAdapter(settings.anthropic_api_key)
             logger.info("Registered Anthropic adapter")
 
         if settings.openai_api_key:
-            self._adapters[ModelProvider.OPENAI] = OpenAIAdapter(
-                settings.openai_api_key
-            )
+            self._adapters[ModelProvider.OPENAI] = OpenAIAdapter(settings.openai_api_key)
             logger.info("Registered OpenAI adapter")
 
         if not self._adapters:
@@ -47,10 +43,7 @@ class GatewayService:
         adapter = self._adapters.get(model.provider)
         if adapter is None:
             available = [p.value for p in self._adapters]
-            raise ValueError(
-                f"No adapter for provider '{model.provider}'. "
-                f"Available: {available}"
-            )
+            raise ValueError(f"No adapter for provider '{model.provider}'. Available: {available}")
         return await adapter.complete(prompt, model, output_schema)
 
     def available_providers(self) -> list[ModelProvider]:

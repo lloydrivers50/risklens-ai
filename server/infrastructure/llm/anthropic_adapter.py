@@ -27,16 +27,26 @@ class AnthropicAdapter(BaseLLMAdapter):
             structured_llm = llm.with_structured_output(output_schema)
             parsed = await structured_llm.ainvoke(prompt)
             content = parsed.model_dump_json() if isinstance(parsed, BaseModel) else str(parsed)
-            return content, parsed, TokenUsage(
-                input_tokens=len(prompt) // 4,
-                output_tokens=len(content) // 4,
+            return (
+                content,
+                parsed,
+                TokenUsage(
+                    input_tokens=len(prompt) // 4,
+                    output_tokens=len(content) // 4,
+                ),
             )
 
         response = await llm.ainvoke(prompt)
         content = str(response.content)
 
-        usage_meta: dict[str, Any] = dict(response.usage_metadata) if response.usage_metadata else {}
-        return content, None, TokenUsage(
-            input_tokens=int(usage_meta.get("input_tokens", 0)),
-            output_tokens=int(usage_meta.get("output_tokens", 0)),
+        usage_meta: dict[str, Any] = (
+            dict(response.usage_metadata) if response.usage_metadata else {}
+        )
+        return (
+            content,
+            None,
+            TokenUsage(
+                input_tokens=int(usage_meta.get("input_tokens", 0)),
+                output_tokens=int(usage_meta.get("output_tokens", 0)),
+            ),
         )

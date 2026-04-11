@@ -27,9 +27,7 @@ class BaseLLMAdapter(ABC):
     ) -> LLMResponse:
         start = time.perf_counter()
 
-        content, parsed, token_usage = await self._call_provider(
-            prompt, model, output_schema
-        )
+        content, parsed, token_usage = await self._call_provider(prompt, model, output_schema)
 
         latency_ms = (time.perf_counter() - start) * 1000
         cost_usd = calculate_cost(model.model_name, token_usage)
