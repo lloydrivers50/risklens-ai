@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRef, useEffect } from 'react'
 import { api } from './api'
-import type { TaskType, PlaygroundRequest } from '@/types/api'
+import type { Task, TaskType, PlaygroundRequest } from '@/types/api'
 
 export function useTasks(type?: TaskType) {
   return useQuery({
@@ -9,19 +10,35 @@ export function useTasks(type?: TaskType) {
   })
 }
 
-export function useTask(id: string | null) {
-  return useQuery({
+export function useTask(id: string | null, onComplete?: (task: Task) => void) {
+  const calledForRef = useRef<string | null>(null)
+
+  const query = useQuery({
     queryKey: ['tasks', id],
     queryFn: () => api.tasks.get(id!),
     enabled: !!id,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status
+    refetchInterval: (q) => {
+      const status = q.state.data?.status
       if (status === 'pending' || status === 'processing') {
         return 2000
       }
       return false
     },
   })
+
+  const task = query.data
+  useEffect(() => {
+    if (
+      task &&
+      (task.status === 'completed' || task.status === 'failed') &&
+      calledForRef.current !== task.id
+    ) {
+      calledForRef.current = task.id
+      onComplete?.(task)
+    }
+  }, [task, onComplete])
+
+  return query
 }
 
 export function useHealth() {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { Upload, FileText, X, Send, Eye, AlertCircle, Loader2 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription } from '@/shared/components/Card'
 import { Button } from '@/shared/components/Button'
@@ -23,7 +23,13 @@ export function UploadPage() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
 
   const { data: tasks, isLoading: tasksLoading, error: tasksError } = useTasks()
-  const { data: polledTask } = useTask(activeTaskId)
+  const handleTaskComplete = useCallback((task: Task) => {
+    setActiveTaskId(null)
+    setSelectedTask(task)
+    setFile(null)
+  }, [])
+
+  const { data: polledTask } = useTask(activeTaskId, handleTaskComplete)
 
   const extractMutation = useExtractMutation()
   const summariseMutation = useSummariseMutation()
@@ -34,15 +40,6 @@ export function UploadPage() {
 
   const isProcessing = polledTask?.status === 'pending' || polledTask?.status === 'processing'
   const isBusy = isUploading || isProcessing
-
-  // When polled task completes or fails, show it as the selected task
-  useEffect(() => {
-    if (polledTask && (polledTask.status === 'completed' || polledTask.status === 'failed') && activeTaskId) {
-      setActiveTaskId(null)
-      setSelectedTask(polledTask)
-      setFile(null)
-    }
-  }, [polledTask, activeTaskId])
 
   const completedTasks = (tasks ?? []).filter((t) => t.status === 'completed')
 
