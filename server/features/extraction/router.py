@@ -3,14 +3,14 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any
 
-import pdfplumber
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel
 
-from server.features.extraction.service import ExtractionService
-from server.features.gateway.types import ModelConfig, ModelProvider
+from server.features.extraction.models import TaskResponse
+from server.features.extraction.store import task_store
+from server.features.gateway.types import ModelProvider
+from server.infrastructure.queue.sqs_client import SQSClient
+from server.infrastructure.storage.s3_client import S3Client
 
 logger = logging.getLogger(__name__)
 
@@ -18,59 +18,16 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
 
 # ---------------------------------------------------------------------------
-# Response models (match frontend Task interface)
-# ---------------------------------------------------------------------------
-
-
-class TaskTokenUsage(BaseModel):
-    input: int
-    output: int
-    total: int
-
-
-class TaskResponse(BaseModel):
-    id: str
-    type: str
-    status: str
-    model: str
-    provider: str
-    document_name: str
-    created_at: str
-    completed_at: str | None = None
-    latency_ms: float | None = None
-    token_usage: TaskTokenUsage | None = None
-    cost_usd: float | None = None
-    result: dict[str, Any] | None = None
-    error: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# In-memory task store (replaced by DB/S3 later)
-# ---------------------------------------------------------------------------
-
-_task_store: dict[str, TaskResponse] = {}
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _get_extraction_service(request: Request) -> ExtractionService:
-    return request.app.state.extraction_service  # type: ignore[no-any-return]
+def _get_s3_client(request: Request) -> S3Client:
+    return request.app.state.s3_client  # type: ignore[no-any-return]
 
 
-def _extract_text_from_pdf(file: UploadFile) -> str:
-    """Extract text from an uploaded PDF using pdfplumber."""
-    with pdfplumber.open(file.file) as pdf:  # type: ignore[arg-type]
-        pages: list[str] = []
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                pages.append(text)
-    if not pages:
-        raise HTTPException(status_code=422, detail="Could not extract text from PDF")
-    return "\n\n".join(pages)
+def _get_sqs_client(request: Request) -> SQSClient:
+    return request.app.state.sqs_client  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -85,58 +42,47 @@ async def extract_document(
     model_name: str | None = Query(default=None),
     provider: ModelProvider | None = Query(default=None),
 ) -> TaskResponse:
-    """Upload a PDF and extract structured insurance data."""
+    """Upload a PDF, store it in S3, and queue an extraction task via SQS."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    resolved_provider = provider or ModelProvider.ANTHROPIC
+    resolved_model = model_name or "claude-sonnet-4-20250514"
 
     task = TaskResponse(
         id=task_id,
         type="extraction",
-        status="processing",
-        model=model_name or "claude-sonnet-4-20250514",
-        provider=(provider or ModelProvider.ANTHROPIC).value,
+        status="pending",
+        model=resolved_model,
+        provider=resolved_provider.value,
         document_name=file.filename,
         created_at=now,
     )
-    _task_store[task_id] = task
+    task_store[task_id] = task
 
     try:
-        document_text = _extract_text_from_pdf(file)
+        file_content = await file.read()
+        s3_key = f"documents/{task_id}.pdf"
 
-        model_config: ModelConfig | None = None
-        if model_name or provider:
-            model_config = ModelConfig(
-                provider=provider or ModelProvider.ANTHROPIC,
-                model_name=model_name or "claude-sonnet-4-20250514",
-            )
+        s3 = _get_s3_client(request)
+        await s3.upload_document(file_content, s3_key)
 
-        service = _get_extraction_service(request)
-        result, llm_response = await service.extract(document_text, model_config)
-
-        completed_at = datetime.now(timezone.utc).isoformat()
-        task = task.model_copy(
-            update={
-                "status": "completed",
-                "completed_at": completed_at,
-                "latency_ms": llm_response.latency_ms,
-                "token_usage": TaskTokenUsage(
-                    input=llm_response.token_usage.input_tokens,
-                    output=llm_response.token_usage.output_tokens,
-                    total=llm_response.token_usage.total_tokens,
-                ),
-                "cost_usd": llm_response.cost_usd,
-                "result": result.model_dump(),
-            }
+        sqs = _get_sqs_client(request)
+        await sqs.send_task(
+            task_id=task_id,
+            s3_key=s3_key,
+            task_type="extraction",
+            model_config={
+                "provider": resolved_provider.value,
+                "model_name": resolved_model,
+            },
         )
-        _task_store[task_id] = task
+        logger.info("Task queued: task_id=%s, s3_key=%s", task_id, s3_key)
 
-    except HTTPException:
-        raise
     except Exception as exc:
-        logger.exception("Extraction failed for task %s", task_id)
+        logger.exception("Failed to queue extraction task: task_id=%s", task_id)
         task = task.model_copy(
             update={
                 "status": "failed",
@@ -144,7 +90,7 @@ async def extract_document(
                 "error": str(exc),
             }
         )
-        _task_store[task_id] = task
+        task_store[task_id] = task
 
     return task
 
@@ -152,7 +98,7 @@ async def extract_document(
 @router.get("/{task_id}", response_model=TaskResponse)
 async def get_task(task_id: str) -> TaskResponse:
     """Retrieve a task by ID."""
-    task = _task_store.get(task_id)
+    task = task_store.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -163,7 +109,7 @@ async def list_tasks(
     type: str | None = Query(default=None),  # noqa: A002
 ) -> list[TaskResponse]:
     """List all tasks, optionally filtered by type."""
-    tasks = list(_task_store.values())
+    tasks = list(task_store.values())
     if type:
         tasks = [t for t in tasks if t.type == type]
     return sorted(tasks, key=lambda t: t.created_at, reverse=True)
