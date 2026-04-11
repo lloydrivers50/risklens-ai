@@ -1,0 +1,90 @@
+# CI/CD pipeline for RiskLens AI
+#
+# Required GitHub secrets for deployment:
+#   - VPS_HOST:    Hostinger VPS IP or hostname
+#   - VPS_USER:    SSH username on the VPS
+#   - VPS_SSH_KEY: Private SSH key for VPS access
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  server-checks:
+    name: Server checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: cd server && uv sync --extra dev
+
+      - name: Lint
+        run: cd server && uv run ruff check .
+
+      - name: Format check
+        run: cd server && uv run ruff format --check .
+
+      - name: Type check
+        run: cd server && uv run python -m mypy . --strict
+
+      - name: Test
+        run: cd server && uv run python -m pytest tests/ -v
+
+  client-checks:
+    name: Client checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: cd client && npm ci
+
+      - name: Lint
+        run: cd client && npm run lint
+
+      - name: Type check
+        run: cd client && npx tsc -b --noEmit
+
+      - name: Build
+        run: cd client && npm run build
+
+  deploy:
+    name: Deploy to VPS
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [server-checks, client-checks]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/risklens-ai
+            git pull origin main
+            cd server && uv sync
+            cd ../client && npm ci && npm run build
+            sudo systemctl restart risklens-api
+            sudo cp -r dist/* /var/www/risklens/
