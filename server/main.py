@@ -13,6 +13,8 @@ from server.features.extraction.router import router as extraction_router
 from server.features.extraction.service import ExtractionService
 from server.features.gateway.service import GatewayService
 from server.features.gateway.types import ModelConfig, ModelProvider, TokenUsage
+from server.infrastructure.queue.sqs_client import SQSClient
+from server.infrastructure.storage.s3_client import S3Client
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=settings.log_level)
     app.state.gateway = GatewayService(settings)
     app.state.extraction_service = ExtractionService(app.state.gateway)
+    app.state.s3_client = S3Client(settings)
+    app.state.sqs_client = SQSClient(settings)
     logger.info(
         "RiskLens AI started — providers: %s",
         [p.value for p in app.state.gateway.available_providers()],

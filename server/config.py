@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     default_model_provider: str = "anthropic"
     default_model_name: str = "claude-sonnet-4-20250514"
 
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region: str = "eu-west-2"
+    s3_bucket_name: str = "risklens-dev-documents"
+    sqs_queue_url: str | None = None
+
     log_level: str = "INFO"
 
 
