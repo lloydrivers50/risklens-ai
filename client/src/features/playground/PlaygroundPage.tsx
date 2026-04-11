@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Send, RotateCcw, Sparkles, Clock, Coins, Hash } from 'lucide-react'
+import { Send, RotateCcw, Sparkles, Clock, Coins, Hash, AlertCircle } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription } from '@/shared/components/Card'
 import { Button } from '@/shared/components/Button'
 import { cn, formatLatency, formatCurrency, formatNumber } from '@/shared/lib/utils'
+import { usePlaygroundMutation } from '@/services/hooks'
 import type { TaskType, ModelProvider } from '@/types/api'
 
 const models: Array<{ provider: ModelProvider; model: string; label: string }> = [
@@ -26,20 +27,13 @@ const samplePrompts: Record<TaskType, string> = {
     'Assess the risk profile of this property based on the inspection report. Provide a risk score (0-100), grade (A-F), key risk factors, and recommendations.',
 }
 
-interface MockResult {
-  response: string
-  latency_ms: number
-  tokens: { input: number; output: number; total: number }
-  cost_usd: number
-}
-
 export function PlaygroundPage() {
   const [selectedModel, setSelectedModel] = useState(0)
   const [selectedTask, setSelectedTask] = useState<TaskType>('extraction')
   const [prompt, setPrompt] = useState(samplePrompts.extraction)
   const [temperature, setTemperature] = useState(0.0)
-  const [isRunning, setIsRunning] = useState(false)
-  const [result, setResult] = useState<MockResult | null>(null)
+
+  const playgroundMutation = usePlaygroundMutation()
 
   const handleTaskChange = (task: TaskType) => {
     setSelectedTask(task)
@@ -47,48 +41,25 @@ export function PlaygroundPage() {
   }
 
   const handleRun = () => {
-    setIsRunning(true)
-    setResult(null)
-    setTimeout(() => {
-      setResult({
-        response: JSON.stringify(
-          selectedTask === 'extraction'
-            ? {
-                insured_name: 'Acme Corp Ltd',
-                policy_number: 'CPP-2024-78432',
-                effective_date: '2024-01-15',
-                expiry_date: '2025-01-15',
-                total_insured_value: 12500000,
-                deductible: 50000,
-                perils_covered: ['fire', 'flood', 'earthquake', 'business_interruption'],
-              }
-            : selectedTask === 'summarisation'
-              ? {
-                  summary:
-                    'Commercial property policy for Acme Corp Ltd providing coverage against fire, flood, earthquake, and business interruption. Total insured value of $12.5M with a $50K deductible. Policy effective from 15 Jan 2024 to 15 Jan 2025. Notable exclusion for cyber incidents unless endorsed separately.',
-                }
-              : {
-                  risk_score: 72,
-                  risk_grade: 'B',
-                  key_risks: ['outdated fire suppression', 'proximity to flood zone', 'high occupancy density'],
-                  recommendations: ['upgrade sprinkler system', 'install flood barriers', 'review occupancy limits'],
-                },
-          null,
-          2,
-        ),
-        latency_ms: 2400 + Math.random() * 3000,
-        tokens: { input: 1200 + Math.floor(Math.random() * 800), output: 400 + Math.floor(Math.random() * 600), total: 0 },
-        cost_usd: 0.015 + Math.random() * 0.025,
-      })
-      setIsRunning(false)
-    }, 1500 + Math.random() * 1500)
+    const model = models[selectedModel]
+    playgroundMutation.mutate({
+      prompt,
+      model: model.model,
+      provider: model.provider,
+      task_type: selectedTask,
+      temperature,
+    })
   }
 
   const handleReset = () => {
     setPrompt(samplePrompts[selectedTask])
-    setResult(null)
+    playgroundMutation.reset()
     setTemperature(0.0)
   }
+
+  const result = playgroundMutation.data
+  const error = playgroundMutation.error
+  const isRunning = playgroundMutation.isPending
 
   return (
     <div className="space-y-8">
@@ -140,6 +111,15 @@ export function PlaygroundPage() {
             </div>
           </Card>
 
+          {error && (
+            <Card>
+              <div className="flex items-center gap-2 rounded-lg bg-danger-light p-4 text-sm text-danger">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span>{error.message || 'Request failed. Please try again.'}</span>
+              </div>
+            </Card>
+          )}
+
           {result && (
             <Card>
               <CardHeader>
@@ -155,7 +135,7 @@ export function PlaygroundPage() {
                     </span>
                     <span className="flex items-center gap-1">
                       <Hash className="h-3 w-3" />
-                      {formatNumber(result.tokens.input + result.tokens.output)} tokens
+                      {formatNumber(result.token_usage.total)} tokens
                     </span>
                     <span className="flex items-center gap-1">
                       <Coins className="h-3 w-3" />
@@ -165,7 +145,7 @@ export function PlaygroundPage() {
                 </div>
               </CardHeader>
               <pre className="rounded-lg bg-primary p-4 text-sm text-primary-foreground overflow-auto font-mono leading-relaxed max-h-96">
-                {result.response}
+                {result.result}
               </pre>
             </Card>
           )}

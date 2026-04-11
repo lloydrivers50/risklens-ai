@@ -1,12 +1,12 @@
-import { useState, useCallback } from 'react'
-import { Upload, FileText, X, Send, Eye } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { Upload, FileText, X, Send, Eye, AlertCircle, Loader2 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription } from '@/shared/components/Card'
 import { Button } from '@/shared/components/Button'
 import { Badge } from '@/shared/components/Badge'
 import { StatusBadge } from '@/shared/components/StatusBadge'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { cn, formatDate, formatLatency, formatCurrency, getTaskTypeLabel } from '@/shared/lib/utils'
-import { mockTasks } from '@/services/mock-data'
+import { useTasks, useTask, useExtractMutation, useSummariseMutation, useAssessRiskMutation } from '@/services/hooks'
 import type { TaskType, Task } from '@/types/api'
 
 const taskTypes: Array<{ value: TaskType; label: string; description: string }> = [
@@ -20,8 +20,31 @@ export function UploadPage() {
   const [taskType, setTaskType] = useState<TaskType>('extraction')
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
 
-  const completedTasks = mockTasks.filter((t) => t.status === 'completed')
+  const { data: tasks, isLoading: tasksLoading, error: tasksError } = useTasks()
+  const { data: polledTask } = useTask(activeTaskId)
+
+  const extractMutation = useExtractMutation()
+  const summariseMutation = useSummariseMutation()
+  const assessRiskMutation = useAssessRiskMutation()
+
+  const isUploading = extractMutation.isPending || summariseMutation.isPending || assessRiskMutation.isPending
+  const uploadError = extractMutation.error || summariseMutation.error || assessRiskMutation.error
+
+  const isProcessing = polledTask?.status === 'pending' || polledTask?.status === 'processing'
+  const isBusy = isUploading || isProcessing
+
+  // When polled task completes or fails, show it as the selected task
+  useEffect(() => {
+    if (polledTask && (polledTask.status === 'completed' || polledTask.status === 'failed') && activeTaskId) {
+      setActiveTaskId(null)
+      setSelectedTask(polledTask)
+      setFile(null)
+    }
+  }, [polledTask, activeTaskId])
+
+  const completedTasks = (tasks ?? []).filter((t) => t.status === 'completed')
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -35,6 +58,28 @@ export function UploadPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0]
     if (selected) setFile(selected)
+  }
+
+  const handleSubmit = () => {
+    if (!file) return
+
+    const mutationMap = {
+      extraction: extractMutation,
+      summarisation: summariseMutation,
+      risk_assessment: assessRiskMutation,
+    } as const
+
+    const mutation = mutationMap[taskType]
+    mutation.mutate(file, {
+      onSuccess: (task) => {
+        if (task.status === 'completed' || task.status === 'failed') {
+          setSelectedTask(task)
+          setFile(null)
+        } else {
+          setActiveTaskId(task.id)
+        }
+      },
+    })
   }
 
   return (
@@ -96,7 +141,8 @@ export function UploadPage() {
                   </div>
                   <button
                     onClick={() => setFile(null)}
-                    className="ml-4 rounded-lg p-1 text-muted hover:bg-surface-tertiary hover:text-primary"
+                    disabled={isBusy}
+                    className="ml-4 rounded-lg p-1 text-muted hover:bg-surface-tertiary hover:text-primary disabled:opacity-50"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -123,11 +169,34 @@ export function UploadPage() {
               )}
             </div>
 
+            {uploadError && (
+              <div className="mt-4 flex items-center gap-2 rounded-lg bg-danger-light p-3 text-sm text-danger">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span>{uploadError.message || 'Upload failed. Please try again.'}</span>
+              </div>
+            )}
+
+            {isProcessing && (
+              <div className="mt-4 flex items-center gap-2 rounded-lg bg-accent-light/30 p-3 text-sm text-accent-foreground">
+                <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+                <span>Processing document... This may take a few seconds.</span>
+              </div>
+            )}
+
             {file && (
               <div className="mt-4 flex justify-end">
-                <Button size="lg">
-                  <Send className="h-4 w-4" />
-                  Process with {getTaskTypeLabel(taskType)}
+                <Button size="lg" onClick={handleSubmit} disabled={isBusy}>
+                  {isBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4" />
+                      Process with {getTaskTypeLabel(taskType)}
+                    </>
+                  )}
                 </Button>
               </div>
             )}
@@ -139,32 +208,61 @@ export function UploadPage() {
             <div className="p-6 pb-3">
               <CardTitle>Recent Results</CardTitle>
             </div>
-            <div className="divide-y divide-border">
-              {completedTasks.slice(0, 5).map((task) => (
-                <button
-                  key={task.id}
-                  onClick={() => setSelectedTask(task)}
-                  className={cn(
-                    'w-full px-6 py-3 text-left hover:bg-surface-secondary transition-colors',
-                    selectedTask?.id === task.id && 'bg-accent-light/30',
-                  )}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-primary truncate max-w-[160px]">
-                      {task.document_name.replace('.pdf', '')}
-                    </span>
-                    <StatusBadge status={task.status} />
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted">
-                    <Badge>{getTaskTypeLabel(task.type)}</Badge>
-                    <span>{task.latency_ms && formatLatency(task.latency_ms)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            {tasksLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted" />
+              </div>
+            ) : tasksError ? (
+              <div className="px-6 pb-4 text-xs text-danger">
+                Failed to load tasks
+              </div>
+            ) : completedTasks.length === 0 ? (
+              <div className="px-6 pb-4 text-xs text-muted">
+                No completed tasks yet
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {completedTasks.slice(0, 5).map((task) => (
+                  <button
+                    key={task.id}
+                    onClick={() => setSelectedTask(task)}
+                    className={cn(
+                      'w-full px-6 py-3 text-left hover:bg-surface-secondary transition-colors',
+                      selectedTask?.id === task.id && 'bg-accent-light/30',
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium text-primary truncate max-w-[160px]">
+                        {task.document_name.replace('.pdf', '')}
+                      </span>
+                      <StatusBadge status={task.status} />
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted">
+                      <Badge>{getTaskTypeLabel(task.type)}</Badge>
+                      <span>{task.latency_ms && formatLatency(task.latency_ms)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       </div>
+
+      {selectedTask?.status === 'failed' && selectedTask.error && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-danger">
+              <AlertCircle className="h-4 w-4" />
+              Task Failed
+            </CardTitle>
+            <CardDescription>{selectedTask.document_name}</CardDescription>
+          </CardHeader>
+          <div className="rounded-lg bg-danger-light p-4 text-sm text-danger">
+            {selectedTask.error}
+          </div>
+        </Card>
+      )}
 
       {selectedTask?.result && (
         <Card>
@@ -197,7 +295,7 @@ export function UploadPage() {
         </Card>
       )}
 
-      {!selectedTask && completedTasks.length === 0 && (
+      {!selectedTask && completedTasks.length === 0 && !tasksLoading && (
         <EmptyState
           icon={FileText}
           title="No results yet"

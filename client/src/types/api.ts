@@ -68,6 +68,12 @@ export interface PlaygroundResponse {
   cost_usd: number
 }
 
+export interface HealthResponse {
+  status: string
+  version: string
+  providers: string[]
+}
+
 export interface EvaluationRun {
   id: string
   dataset: string
