@@ -84,7 +84,6 @@ jobs:
           script: |
             cd /opt/risklens-ai
             git pull origin main
-            cd server && uv sync
+            cd server && uv sync --python 3.12
             cd ../client && npm ci && npm run build
-            sudo systemctl restart risklens-api
-            sudo cp -r dist/* /var/www/risklens/
+            systemctl restart risklens-api
