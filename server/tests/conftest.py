@@ -49,4 +49,5 @@ def mock_gateway() -> MagicMock:
 def client(mock_gateway: MagicMock) -> Iterator[TestClient]:
     with TestClient(app, raise_server_exceptions=False) as tc:
         app.state.gateway = mock_gateway
+        app.state.task_store = MagicMock()
         yield tc

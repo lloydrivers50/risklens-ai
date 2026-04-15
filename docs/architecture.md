@@ -126,13 +126,16 @@ This decouples the upload from the processing, enabling:
 - Retry logic on failures
 - Backpressure handling during spikes
 
-### 5. Document Storage (S3)
+### 5. Storage (S3)
 
-Raw documents stored in S3 with:
+S3 serves dual purpose — document storage and task metadata persistence (see [ADR-004](adrs/004-s3-task-store.md)):
+
+- **Documents**: Raw PDFs stored at `documents/{task_id}.pdf`
+- **Task metadata**: Status, results, and metrics stored at `tasks/{task_id}.json`
 - Versioning enabled
 - Server-side encryption (AES-256)
 - Lifecycle policies for cost management
-- Pre-signed URLs for secure frontend uploads
+- Both API and worker processes read/write to the same bucket, solving process isolation
 
 ### 6. Evaluation Framework
 
@@ -183,8 +186,8 @@ Alarms configured for:
    d. Calls LLM Gateway → Claude (default for extraction)
    e. Parses structured JSON response
    f. Validates against Pydantic schema
-   g. Stores result with confidence scores
-5. Task status updated to "complete"
+   g. Stores result and metrics to S3 as tasks/{task_id}.json
+5. Task status updated to "completed" in S3
 6. React dashboard polls task_id, displays results
 ```
 

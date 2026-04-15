@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 
 from server.features.extraction.models import TaskResponse
-from server.features.extraction.store import task_store
+from server.features.extraction.store import TaskStore
 from server.features.gateway.types import ModelProvider
 from server.infrastructure.queue.sqs_client import SQSClient
 from server.infrastructure.storage.s3_client import S3Client
@@ -28,6 +28,10 @@ def _get_s3_client(request: Request) -> S3Client:
 
 def _get_sqs_client(request: Request) -> SQSClient:
     return request.app.state.sqs_client  # type: ignore[no-any-return]
+
+
+def _get_task_store(request: Request) -> TaskStore:
+    return request.app.state.task_store  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +64,9 @@ async def extract_document(
         document_name=file.filename,
         created_at=now,
     )
-    task_store[task_id] = task
+
+    store = _get_task_store(request)
+    await store.save(task)
 
     try:
         file_content = await file.read()
@@ -90,15 +96,16 @@ async def extract_document(
                 "error": str(exc),
             }
         )
-        task_store[task_id] = task
+        await store.save(task)
 
     return task
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str) -> TaskResponse:
+async def get_task(request: Request, task_id: str) -> TaskResponse:
     """Retrieve a task by ID."""
-    task = task_store.get(task_id)
+    store = _get_task_store(request)
+    task = await store.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -106,10 +113,9 @@ async def get_task(task_id: str) -> TaskResponse:
 
 @router.get("", response_model=list[TaskResponse])
 async def list_tasks(
+    request: Request,
     type: str | None = Query(default=None),  # noqa: A002
 ) -> list[TaskResponse]:
     """List all tasks, optionally filtered by type."""
-    tasks = list(task_store.values())
-    if type:
-        tasks = [t for t in tasks if t.type == type]
-    return sorted(tasks, key=lambda t: t.created_at, reverse=True)
+    store = _get_task_store(request)
+    return await store.list_tasks(task_type=type)

@@ -10,9 +10,9 @@ from typing import Any
 import pdfplumber
 
 from server.config import Settings, get_settings
-from server.features.extraction.models import TaskTokenUsage
+from server.features.extraction.models import TaskResponse, TaskTokenUsage
 from server.features.extraction.service import ExtractionService
-from server.features.extraction.store import task_store
+from server.features.extraction.store import TaskStore
 from server.features.gateway.service import GatewayService
 from server.features.gateway.types import ModelConfig, ModelProvider
 from server.infrastructure.queue.sqs_client import SQSClient
@@ -38,23 +38,36 @@ async def process_task(
     task_msg: dict[str, Any],
     s3: S3Client,
     extraction: ExtractionService,
+    store: TaskStore,
 ) -> None:
-    """Download PDF from S3, run extraction, and update the task store."""
+    """Download PDF from S3, run extraction, and update the task in S3."""
     body: dict[str, Any] = json.loads(task_msg["Body"])
     task_id: str = body["task_id"]
     s3_key: str = body["s3_key"]
     model_cfg: dict[str, str] = body["model_config"]
+    task_type: str = body.get("task_type", "extraction")
 
-    task = task_store.get(task_id)
+    task = await store.get(task_id)
     if task is None:
-        logger.warning("Task not found in store, skipping: task_id=%s", task_id)
+        # Task may have been created by the API but S3 is eventually consistent.
+        # Build the task from the SQS message so we can still process it.
+        logger.warning("Task not in store, creating from SQS message: task_id=%s", task_id)
+        task = TaskResponse(
+            id=task_id,
+            type=task_type,
+            status="pending",
+            model=model_cfg["model_name"],
+            provider=model_cfg["provider"],
+            document_name=s3_key.split("/")[-1],
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    if task.status not in ("pending", "processing"):
+        logger.info("Task already handled, skipping: task_id=%s status=%s", task_id, task.status)
         return
 
-    if task.status != "pending":
-        logger.info("Task already processed, skipping: task_id=%s status=%s", task_id, task.status)
-        return
-
-    task_store[task_id] = task.model_copy(update={"status": "processing"})
+    task = task.model_copy(update={"status": "processing"})
+    await store.save(task)
 
     try:
         pdf_bytes = await s3.download_document(s3_key)
@@ -66,11 +79,10 @@ async def process_task(
         )
         result, llm_response = await extraction.extract(document_text, model_config)
 
-        completed_at = datetime.now(timezone.utc).isoformat()
-        task_store[task_id] = task.model_copy(
+        task = task.model_copy(
             update={
                 "status": "completed",
-                "completed_at": completed_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "latency_ms": llm_response.latency_ms,
                 "token_usage": TaskTokenUsage(
                     input=llm_response.token_usage.input_tokens,
@@ -81,17 +93,19 @@ async def process_task(
                 "result": result.model_dump(),
             }
         )
+        await store.save(task)
         logger.info("Task completed: task_id=%s", task_id)
 
     except Exception as exc:
         logger.exception("Task failed: task_id=%s", task_id)
-        task_store[task_id] = task.model_copy(
+        task = task.model_copy(
             update={
                 "status": "failed",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "error": str(exc),
             }
         )
+        await store.save(task)
         raise
 
 
@@ -101,6 +115,7 @@ async def worker_loop(settings: Settings) -> None:
     sqs = SQSClient(settings)
     gateway = GatewayService(settings)
     extraction = ExtractionService(gateway)
+    store = TaskStore(settings)
 
     logger.info("Worker started — polling SQS")
 
@@ -109,7 +124,7 @@ async def worker_loop(settings: Settings) -> None:
         for msg in messages:
             receipt_handle: str = msg["ReceiptHandle"]
             try:
-                await process_task(msg, s3, extraction)
+                await process_task(msg, s3, extraction, store)
                 await sqs.delete_message(receipt_handle)
             except Exception:
                 logger.exception("Message processing failed, leaving on queue")
